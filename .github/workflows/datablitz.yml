@@ -1,0 +1,126 @@
+name: Scrape & Publish DataBlitz
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: '0 22 * * *'  # 6:00 AM PHT
+    - cron: '0 10 * * *'  # 6:00 PM PHT
+
+permissions:
+  contents: write
+
+jobs:
+  scrape-datablitz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      WEBSITE_REPO: maysaleba/maysaleba.github.io
+
+    steps:
+      # =========================
+      # Checkout DataBlitz repo
+      # =========================
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # =========================
+      # Node.js
+      # =========================
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      # =========================
+      # Run DataBlitz scraper
+      # =========================
+      - name: Scrape DataBlitz
+        run: node scrape_datablitz.js
+
+      # =========================
+      # Verify output
+      # =========================
+      - name: Verify output
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking generated DataBlitz file..."
+
+          test -f datablitz_prices.json || {
+            echo "datablitz_prices.json was not generated."
+            exit 1
+          }
+
+          ls -lh datablitz_prices.json
+
+          echo "Product count:"
+          node -e "
+            const data = require('./datablitz_prices.json');
+            console.log(data.length);
+          "
+
+      # =========================
+      # Optional:
+      # Save latest output in DataBlitz repo
+      # =========================
+      - name: Commit latest output to DataBlitz repo
+        shell: bash
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add datablitz_prices.json
+
+          if ! git diff --cached --quiet; then
+            git commit -m "CI: update DataBlitz prices [skip ci]"
+            git push
+          else
+            echo "No DataBlitz changes to commit."
+          fi
+
+      # =========================
+      # Publish to website repo
+      # =========================
+      - name: Push to website repo
+        env:
+          PAT: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -e
+
+          : "${PAT:?PERSONAL_ACCESS_TOKEN secret is required}"
+
+          echo "Publishing DataBlitz output..."
+
+          ls -lh datablitz_prices.json
+
+          git clone --depth 1 \
+            "https://x-access-token:${PAT}@github.com/${WEBSITE_REPO}.git" \
+            publish
+
+          mkdir -p publish/src
+
+          cp -f \
+            datablitz_prices.json \
+            publish/src/datablitz_prices.json
+
+          cd publish
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add src/datablitz_prices.json
+
+          if ! git diff --cached --quiet; then
+            git commit -m "CI: update DataBlitz prices"
+            git push origin HEAD
+          else
+            echo "No website changes to publish."
+          fi
